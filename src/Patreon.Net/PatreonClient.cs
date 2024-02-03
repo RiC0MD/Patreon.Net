@@ -14,22 +14,24 @@ namespace Patreon.Net
     /// </summary>
     public class PatreonClient : IDisposable
     {
-        private readonly JsonSerializer jsonSerializer;
-        private readonly HttpClient httpClient;
-        private readonly string clientId;
-        private OAuthToken oAuthToken;
-        private DateTimeOffset oAuthTokenExpirationDate;
+        private readonly JsonSerializer _jsonSerializer;
+        private readonly HttpClient _httpClient;
+        private readonly string _clientId;
+        private OAuthToken _oAuthToken;
+        private DateTimeOffset _oAuthTokenExpirationDate;
 
         /// <summary>
         /// Occurs when a new OAuth token has been acquired. The previous access and refresh tokens are invalidated and replaced prior to this event.
         /// </summary>
         public event TokenRefreshedAsyncEvent TokensRefreshedAsync;
+
+        /// <inheritdoc />
         public delegate Task TokenRefreshedAsyncEvent(OAuthToken token);
 
         /// <summary>
         /// The version of the Patreon.Net library, such as "0.9.0".
         /// </summary>
-        public static string Version { get; } = typeof(PatreonClient).Assembly.GetName().Version.ToString(3) ?? "Unknown";
+        public static string Version { get; } = typeof(PatreonClient).Assembly.GetName().Version?.ToString(3) ?? "Unknown";
 
         /// <summary>
         /// Creates a new <see cref="PatreonClient"/> with an unknown token expiration date.
@@ -51,22 +53,22 @@ namespace Patreon.Net
             if (string.IsNullOrWhiteSpace(accessToken))
                 throw new ArgumentNullException(nameof(accessToken));
 
-            jsonSerializer = new JsonSerializer()
+            _jsonSerializer = new JsonSerializer()
             {
                 NullValueHandling = NullValueHandling.Ignore,
                 MissingMemberHandling = MissingMemberHandling.Ignore
             };
 
-            httpClient = new HttpClient(new SocketsHttpHandler() { UseCookies = false, AllowAutoRedirect = false, }, true)
+            _httpClient = new HttpClient(new SocketsHttpHandler() { UseCookies = false, AllowAutoRedirect = false, }, true)
             {
                 BaseAddress = new Uri(Endpoints.Hostname),
             };
 
-            oAuthToken = new OAuthToken() { AccessToken = accessToken, RefreshToken = refreshToken };
-            oAuthTokenExpirationDate = tokenExpirationDate;
+            _oAuthToken = new OAuthToken() { AccessToken = accessToken, RefreshToken = refreshToken };
+            _oAuthTokenExpirationDate = tokenExpirationDate;
 
-            this.clientId = clientId;
-            var headers = httpClient.DefaultRequestHeaders;
+            this._clientId = clientId;
+            var headers = _httpClient.DefaultRequestHeaders;
             headers.Add("Authorization", "Bearer " + accessToken);
             headers.Add("Accept", "application/json");
             headers.UserAgent.Add(new ProductInfoHeaderValue("Patreon.Net", Version));
@@ -74,23 +76,22 @@ namespace Patreon.Net
 
         private async Task<bool> RefreshTokenAsync()
         {
-            string requestUri = Endpoints.Token.RefreshToken(oAuthToken.RefreshToken, clientId);
+            string requestUri = Endpoints.Token.RefreshToken(_oAuthToken.RefreshToken, _clientId);
             using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
-            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
             var statusCodeNumber = (int)response.StatusCode;
             if (statusCodeNumber >= 200 && statusCodeNumber < 300)
             {
                 var httpContent = response.Content;
-                if (httpContent != null)
                 {
                     string content = await httpContent.ReadAsStringAsync().ConfigureAwait(false);
-                    if (content != null && content.Length > 0)
+                    if (content.Length > 0)
                     {
-                        OAuthToken newToken = JObject.Parse(content).ToObject<OAuthToken>(jsonSerializer);
-                        oAuthToken = newToken;
-                        oAuthTokenExpirationDate = DateTimeOffset.UtcNow.AddSeconds(newToken.ExpiresIn);
+                        OAuthToken newToken = JObject.Parse(content).ToObject<OAuthToken>(_jsonSerializer);
+                        _oAuthToken = newToken;
+                        _oAuthTokenExpirationDate = DateTimeOffset.UtcNow.AddSeconds(newToken.ExpiresIn);
 
-                        var headers = httpClient.DefaultRequestHeaders;
+                        var headers = _httpClient.DefaultRequestHeaders;
                         headers.Remove("Authorization");
                         headers.Add("Authorization", "Bearer " + newToken.AccessToken);
 
@@ -105,7 +106,7 @@ namespace Patreon.Net
 
         internal async Task<T> GetAsync<T>(string requestUri, bool isRetry = false) where T : class
         {
-            if(!isRetry && DateTimeOffset.UtcNow >= oAuthTokenExpirationDate && !string.IsNullOrEmpty(oAuthToken.RefreshToken))
+            if(!isRetry && DateTimeOffset.UtcNow >= _oAuthTokenExpirationDate && !string.IsNullOrEmpty(_oAuthToken.RefreshToken))
             {
                 if(!await RefreshTokenAsync().ConfigureAwait(false))
                     throw new PatreonApiException("Failed to refresh OAuth token. Please verify that you have supplied a valid token.");
@@ -113,18 +114,17 @@ namespace Patreon.Net
             }
 
             using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
-            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseContentRead).ConfigureAwait(false);
             var statusCodeNumber = (int)response.StatusCode;
             if (statusCodeNumber >= 200 && statusCodeNumber < 300)
             {
                 var httpContent = response.Content;
-                if (httpContent != null)
                 {
                     string content = await httpContent.ReadAsStringAsync().ConfigureAwait(false);
-                    if (content != null && content.Length > 0)
+                    if (content.Length > 0)
                     {
                         if (JsonPostprocessor.Process(JObject.Parse(content), out JToken dataToken))
-                            return dataToken.ToObject<T>(jsonSerializer);
+                            return dataToken.ToObject<T>(_jsonSerializer);
                     }
                 }
                 throw new PatreonApiException($"Patreon returned an indecipherable response format (\"{requestUri}\")");
@@ -155,14 +155,13 @@ namespace Patreon.Net
                 default:
                     {
                         var httpContent = response.Content;
-                        if (httpContent != null)
                         {
                             string content = await httpContent.ReadAsStringAsync().ConfigureAwait(false);
-                            if (content != null && content.Length > 0)
+                            if (content.Length > 0)
                             {
                                 try
                                 {
-                                    var apiErrors = JObject.Parse(content).ToObject<ApiErrors>(jsonSerializer);
+                                    var apiErrors = JObject.Parse(content).ToObject<ApiErrors>(_jsonSerializer);
                                     if (apiErrors.Error != null)
                                     {
                                         throw new PatreonApiException($"Patreon returned an error: {apiErrors.Error}");
@@ -311,19 +310,24 @@ namespace Patreon.Net
 
         #region IDisposable Implementation
 
-        private bool disposedValue;
+        private bool _disposedValue;
 
+        /// <summary>
+        /// Dispose Client
+        /// </summary>
+        /// <param name="disposing"></param>
         protected virtual void Dispose(bool disposing)
         {
-            if (!disposedValue)
-            {
-                if (disposing)
-                    httpClient.Dispose();
+            if (_disposedValue) return;
+            if (disposing)
+                _httpClient.Dispose();
 
-                disposedValue = true;
-            }
+            _disposedValue = true;
         }
 
+        /// <summary>
+        /// Dispose Client
+        /// </summary>
         public void Dispose()
         {
             Dispose(disposing: true);
